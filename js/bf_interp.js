@@ -1,50 +1,45 @@
-function die(s) {
-    throw ("Error: " + s);
-}
+var OP_INCREMENT = '+';
+var OP_DECREMENT = '-';
+var OP_LEFT = '<';
+var OP_RIGHT = '>';
+var OP_BEGIN_LOOP = '[';
+var OP_END_LOOP = ']';
+var OP_GET = ',';
+var OP_PUT = '.';
+var OP_STOP = 0;
+var BAD_JUMP = -1;
 
-function advance_to_matching_brace(program, pc) {
-    var level = 0;
-    var program_size = program.length;
-    while ((0 <= pc) && (pc < program_size)) {
-        switch(program.charAt(pc)) {
-            case '[':
-                level += 1;
-                break;
-            case ']':
-                level -= 1;
-                if (level == 0) {
-                    return pc;
-                }
-                break;
-            default:
+function preprocess(code) {
+    var ops, jumps, jump_stack, i, c, jump, j, program;
+
+    ops = [];
+    jumps = [];
+    jump_stack = [];
+
+    for (i = 0; i < code.length; ++i) {
+        c = code[i];
+        ops.push(c);
+        if (c === OP_BEGIN_LOOP) {
+            jump_stack.push(i);
+            jumps.push(BAD_JUMP);
+        } else if (c === OP_END_LOOP) {
+            j = jump_stack.pop();
+            jumps.push(j);
+            jumps[j] = i;
+        } else {
+            jumps.push(BAD_JUMP);
         }
-        pc += 1;
     }
-    die('unmatched [');
+    ops.push(OP_STOP);
+    jumps.push(BAD_JUMP);
+    program = {
+        'ops' : ops,
+        'jumps' : jumps
+    };
+    return program;
 }
 
-function rewind_to_matching_brace(program, pc) {
-    var level = 0;
-    var program_size = program.length;
-    while ((0 <= pc) && (pc < program_size)) {
-        switch(program.charAt(pc)) {
-            case '[':
-                level -= 1;
-                if (level == 0) {
-                    return pc;
-                }
-                break;
-            case ']':
-                level += 1;
-                break;
-            default:
-        }
-        pc -= 1;
-    }
-    die('unmatched ]');
-}
-
-function bf_interp(stdin, stdout, program) {
+function bf_interp(stdin, stdout, machine_status, program) {
     // input handling
     var input_size = stdin.value.length;
     var ip = 0;
@@ -55,10 +50,19 @@ function bf_interp(stdin, stdout, program) {
             return 0;
         }
     }
-    // output handling
     stdout.value = "";
+    machine_status.value = "RUNNING; steps_elapsed: 0";
+    // output handling
+    var put_buffer = "";
     function put_char(c) {
-        stdout.value = (stdout.value + String.fromCharCode(c));
+        put_buffer = put_buffer + String.fromCharCode(c);
+    }
+    function flush_put_buffer() {
+        stdout.value = stdout.value + put_buffer;
+        // scroll text area
+        stdout.scrollTop = stdout.scrollHeight;
+        // clear put buffer
+        put_buffer = "";
     }
     // init bf machine
     var buff_size = 30000;
@@ -67,66 +71,62 @@ function bf_interp(stdin, stdout, program) {
         buff[i] = 0;
     }
     var dp = 0;
-    var program_size = program.value.length;
     var pc = 0;
 
-    var chunk_duration = 1000;
-    var delay_after_chunk = 50;
+    var steps_elapsed = 0;
+    var net_steps_elapsed = 0;
+    var steps_per_chunk = 1000000;
+    var delay_after_chunk = 0;
+    var running = true;
 
-    function interp_chunk() {
-        while(pc < program_size) {
-            switch(program.value.charAt(pc)) {
-                case '+':
+    function interpret_chunk() {
+        steps_elapsed = 0;
+        while (running && (steps_elapsed < steps_per_chunk)) {
+            switch(program.ops[pc]) {
+                case OP_INCREMENT:
                     buff[dp] = (buff[dp] + 1) % 256;
                     break;
-                case '-':
+                case OP_DECREMENT:
                     buff[dp] = (buff[dp] - 1) % 256;
                     break;
-                case '<':
-                    if (dp == 0) {
-                        die("dp ran off left end of buff");
-                    } else {
-                        dp--;
+                case OP_LEFT:
+                    dp--;
+                    break;
+                case OP_RIGHT:
+                    dp++;
+                    break;
+                case OP_BEGIN_LOOP:
+                    if (buff[dp] === 0) {
+                        pc = program.jumps[pc];
                     }
                     break;
-                case '>':
-                    if (dp == (buff_size - 1)) {
-                        die("dp ran off right end of buff");
-                    } else {
-                        dp++;
+                case OP_END_LOOP:
+                    if (buff[dp] !== 0) {
+                        pc = program.jumps[pc];
                     }
                     break;
-                case '[':
-                    if (buff[dp] == 0) {
-                        pc = advance_to_matching_brace(program.value, pc);
-                    }
-                    break;
-                case ']':
-                    if (buff[dp] != 0) {
-                        pc = rewind_to_matching_brace(program.value, pc);
-                    }
-                    break;
-                case '.':
+                case OP_PUT:
                     put_char(buff[dp]);
                     break;
-                case ',':
+                case OP_GET:
                     buff[dp] = get_char();
                     break;
+                case OP_STOP:
+                    running = false;
+                    break
                 default:
             }
             pc++;
-            if ((pc % chunk_duration) == 0) {
-                // TODO : scroll stdout to the end somehow ...
-                setTimeout(interp_chunk, delay_after_chunk);
-                break;
-            }
+            steps_elapsed++;
+        }
+        flush_put_buffer();
+        net_steps_elapsed += steps_elapsed
+        machine_status.value = "RUNNING; steps_elapsed: " + net_steps_elapsed.toString();
+        if (running) {
+            setTimeout(interpret_chunk, delay_after_chunk);
         }
     }
+    machine_status.value = "FINISHED; steps_elapsed: " + net_steps_elapsed.toString();
 
-    // TODO : scroll stdout to the end somehow ...
-    interp_chunk();
-}
-
-function bf_interp_run() {
-    bf_interp(document.f.stdin, document.f.stdout, document.f.code);
+    interpret_chunk();
 }
