@@ -124,9 +124,10 @@ function bf_interp(stdin, stdout, machine_status, program) {
         machine_status.value = "RUNNING; steps_elapsed: " + net_steps_elapsed.toString();
         if (running) {
             setTimeout(interpret_chunk, delay_after_chunk);
+        } else {
+            machine_status.value = "FINISHED; steps_elapsed: " + net_steps_elapsed.toString();
         }
     }
-    machine_status.value = "FINISHED; steps_elapsed: " + net_steps_elapsed.toString();
 
     interpret_chunk();
 }
